@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Document Assistant</title>
+    <!-- Modern Sans-Serif Font -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app-layout">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="logo">
+                <i data-lucide="file-text"></i>
+                <h2>PDF Assistant</h2>
+            </div>
+            
+            <div class="upload-zone" id="drop-zone">
+                <input type="file" id="file-input" accept="application/pdf" hidden>
+                <div class="upload-content">
+                    <i data-lucide="upload-cloud"></i>
+                    <p id="upload-status">Click to Upload PDF</p>
+                    <span class="subtext">or drag and drop</span>
+                </div>
+            </div>
+
+            <div class="document-info" id="doc-info" style="display: none;">
+                <h3 id="doc-name">Document.pdf</h3>
+                <p id="doc-pages">12 Pages loaded</p>
+                <span class="badge">Ready for Q&A</span>
+            </div>
+        </aside>
+
+        <!-- Main Chat Panel -->
+        <main class="chat-container">
+            <header class="chat-header">
+                <div class="header-info">
+                    <h2>Ollama Vision</h2>
+                    <p>Powered by qwen3.5:cloud</p>
+                </div>
+            </header>
+
+            <div class="chat-window" id="chat-window">
+                <!-- Welcome Message -->
+                <div class="message ai-message">
+                    <div class="avatar"><i data-lucide="bot"></i></div>
+                    <div class="bubble">
+                        Hello! Please upload a PDF document from the left panel, and then ask me any questions about it.
+                    </div>
+                </div>
+            </div>
+
+            <!-- Input Form -->
+            <div class="input-area">
+                <form id="chat-form">
+                    <input type="text" id="chat-input" placeholder="Ask a question about the document..." autocomplete="off" disabled>
+                    <button type="submit" id="send-btn" disabled>
+                        <i data-lucide="send"></i>
+                    </button>
+                </form>
+            </div>
+        </main>
+    </div>
+    
+    <!-- Marked.js for simple real-time markdown parsing -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="script.js"></script>
+    <script>lucide.createIcons();</script>
+</body>
+</html>
