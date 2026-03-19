@@ -233,3 +233,18 @@ body {
     from { opacity: 0; }
     to { opacity: 1; }
 }
+
+/* ──────────────── Sidebar Library List ──────────────── */
+.sidebar-footer { padding-top: 24px; border-top: 1px solid var(--border); }
+.sidebar-footer a { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); text-decoration: none; font-size: 0.95rem; transition: color 0.2s; }
+.sidebar-footer a:hover { color: var(--text-primary); }
+
+.library-list { display: flex; flex-direction: column; gap: 12px; overflow-y: auto; flex: 1; margin-top: 10px; }
+.book-card { background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border); padding: 16px; border-radius: 12px; cursor: pointer; transition: all 0.2s; }
+.book-card:hover { background: rgba(99, 102, 241, 0.05); border-color: var(--accent); }
+.book-card.active { background: rgba(99, 102, 241, 0.1); border-color: var(--accent); box-shadow: inset 4px 0 0 var(--accent); }
+.book-card h3 { font-size: 0.95rem; margin-bottom: 6px; color: var(--text-primary); }
+.book-card p { font-size: 0.8rem; color: var(--text-secondary); line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.book-card .meta { font-size: 0.65rem; color: var(--accent); margin-top: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+.loading-text { font-size: 0.9rem; color: var(--text-secondary); text-align: center; margin-top: 30px; }
+

@@ -3,35 +3,27 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Document Assistant</title>
-    <!-- Modern Sans-Serif Font -->
+    <title>PDF Library Hub</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
-    <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div class="app-layout">
-        <!-- Sidebar -->
+        <!-- Sidebar: Global Library -->
         <aside class="sidebar">
             <div class="logo">
-                <i data-lucide="file-text"></i>
-                <h2>PDF Assistant</h2>
+                <i data-lucide="library"></i>
+                <h2>Library Hub</h2>
             </div>
             
-            <div class="upload-zone" id="drop-zone">
-                <input type="file" id="file-input" accept="application/pdf" hidden>
-                <div class="upload-content">
-                    <i data-lucide="upload-cloud"></i>
-                    <p id="upload-status">Click to Upload PDF</p>
-                    <span class="subtext">or drag and drop</span>
-                </div>
+            <div class="library-list" id="library-list">
+                <div class="loading-text">Loading books...</div>
             </div>
 
-            <div class="document-info" id="doc-info" style="display: none;">
-                <h3 id="doc-name">Document.pdf</h3>
-                <p id="doc-pages">12 Pages loaded</p>
-                <span class="badge">Ready for Q&A</span>
+            <!-- Footer Admin Link inside Sidebar -->
+            <div class="sidebar-footer">
+                <a href="/admin.html"><i data-lucide="settings"></i> Admin Portal</a>
             </div>
         </aside>
 
@@ -39,17 +31,17 @@
         <main class="chat-container">
             <header class="chat-header">
                 <div class="header-info">
-                    <h2>Ollama Vision</h2>
-                    <p>Powered by qwen3.5:cloud</p>
+                    <h2>Ollama Library Vision</h2>
+                    <p>Select a book from the sidebar to begin chatting.</p>
                 </div>
             </header>
 
             <div class="chat-window" id="chat-window">
-                <!-- Welcome Message -->
                 <div class="message ai-message">
                     <div class="avatar"><i data-lucide="bot"></i></div>
                     <div class="bubble">
-                        Hello! Please upload a PDF document from the left panel, and then ask me any questions about it.
+                        Welcome to the PDF Library! 📚<br/><br/>
+                        Please choose a book from the list on the left. The chat will automatically restrict its answers to the text of the selected book.
                     </div>
                 </div>
             </div>
@@ -57,7 +49,7 @@
             <!-- Input Form -->
             <div class="input-area">
                 <form id="chat-form">
-                    <input type="text" id="chat-input" placeholder="Ask a question about the document..." autocomplete="off" disabled>
+                    <input type="text" id="chat-input" placeholder="Select a book first..." autocomplete="off" disabled>
                     <button type="submit" id="send-btn" disabled>
                         <i data-lucide="send"></i>
                     </button>
@@ -66,7 +58,7 @@
         </main>
     </div>
     
-    <!-- Marked.js for simple real-time markdown parsing -->
+    <!-- Marked.js for markdown parsing -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="script.js"></script>
     <script>lucide.createIcons();</script>

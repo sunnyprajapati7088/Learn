@@ -1,92 +1,72 @@
-const dropZone = document.getElementById("drop-zone");
-const fileInput = document.getElementById("file-input");
-const docInfo = document.getElementById("doc-info");
+const sessionId = crypto.randomUUID();
+let activeBookId = null;
+
+const libraryList = document.getElementById("library-list");
 const chatForm = document.getElementById("chat-form");
 const chatInput = document.getElementById("chat-input");
 const sendBtn = document.getElementById("send-btn");
 const chatWindow = document.getElementById("chat-window");
+const headerInfo = document.querySelector(".header-info");
 
-// ─── 1. PDF Upload Handling ──────────────────────────────────────────────────
-dropZone.addEventListener("click", () => fileInput.click());
-
-dropZone.addEventListener("dragover", (e) => {
-    e.preventDefault();
-    dropZone.classList.add("dragover");
-});
-
-dropZone.addEventListener("dragleave", () => {
-    dropZone.classList.remove("dragover");
-});
-
-dropZone.addEventListener("drop", (e) => {
-    e.preventDefault();
-    dropZone.classList.remove("dragover");
-    if (e.dataTransfer.files.length) {
-        handleUpload(e.dataTransfer.files[0]);
-    }
-});
-
-fileInput.addEventListener("change", (e) => {
-    if (e.target.files.length) {
-        handleUpload(e.target.files[0]);
-    }
-});
-
-async function handleUpload(file) {
-    if (file.type !== "application/pdf") {
-        alert("❌ Please upload a valid PDF file.");
-        return;
-    }
-
-    // UI Loading State
-    const statusText = document.getElementById("upload-status");
-    statusText.innerText = "Parsing PDF...";
-    dropZone.style.pointerEvents = "none";
-    dropZone.style.opacity = "0.7";
-
-    const formData = new FormData();
-    formData.append("pdf", file);
-
+// ─── 1. Load Library ────────────────────────────────────────────────────────
+async function loadBooks() {
     try {
-        const res = await fetch("/upload", { method: "POST", body: formData });
-        const data = await res.json();
+        const res = await fetch("/books");
+        const books = await res.json();
         
-        if (res.ok && data.success) {
-            // Success UI changes
-            dropZone.style.display = "none";
-            docInfo.style.display = "block";
-            document.getElementById("doc-name").innerText = data.filename;
-            document.getElementById("doc-pages").innerText = `${data.pages} Pages loaded`;
-            
-            chatInput.disabled = false;
-            sendBtn.disabled = false;
-            chatInput.placeholder = "Ask a question about your PDF...";
-            chatInput.focus();
-            
-            appendAiMessage(`✅ Successfully analyzed **${data.filename}** (${data.pages} pages). What would you like to know from it?`);
-        } else {
-            throw new Error(data.error || "Failed to parse PDF.");
+        libraryList.innerHTML = "";
+        
+        if (books.length === 0) {
+            libraryList.innerHTML = `<div class="loading-text">No books available. <br><br><a href="/admin.html" style="color:var(--accent); text-decoration:none;">Go to Admin Portal →</a></div>`;
+            return;
         }
+
+        books.forEach(book => {
+            const card = document.createElement("div");
+            card.className = "book-card";
+            card.innerHTML = `
+                <h3>${escapeHtml(book.title)}</h3>
+                <p>${escapeHtml(book.description)}</p>
+                <div class="meta">${book.pages} pages • ${book.chunkCount} indexed chunks</div>
+            `;
+            
+            card.addEventListener("click", () => selectBook(book, card));
+            libraryList.appendChild(card);
+        });
     } catch (e) {
-        console.error(e);
-        alert(e.message);
-        statusText.innerText = "Click to Upload PDF";
-        dropZone.style.pointerEvents = "auto";
-        dropZone.style.opacity = "1";
+        libraryList.innerHTML = `<div class="loading-text" style="color:red">Failed to load library.</div>`;
     }
 }
+
+function selectBook(book, cardElement) {
+    document.querySelectorAll(".book-card").forEach(c => c.classList.remove("active"));
+    cardElement.classList.add("active");
+    
+    activeBookId = book.id;
+    chatInput.disabled = false;
+    sendBtn.disabled = false;
+    chatInput.placeholder = `Ask a question about ${book.title}...`;
+    chatInput.focus();
+    
+    headerInfo.innerHTML = `<h2>${escapeHtml(book.title)}</h2><p>${escapeHtml(book.description)}</p>`;
+    
+    chatWindow.innerHTML = "";
+    appendAiMessage(`✅ You're now connected to **${book.title}**. Ask me anything, and I'll only answer using this specific book!`);
+}
+
+loadBooks();
 
 // ─── 2. Chat Q&A Interaction (SSE Streams) ──────────────────────────────────
 chatForm.addEventListener("submit", async (e) => {
     e.preventDefault();
+    if (!activeBookId) return alert("Select a book from the library first!");
+    
     const msg = chatInput.value.trim();
     if (!msg) return;
 
-    // Append User Message
     appendUserMessage(msg);
     chatInput.value = "";
     
-    // Create AI Bubble context
     const aiBubbleId = createAiBubble();
     const bubbleContent = document.querySelector(`#${aiBubbleId} .bubble`);
     
@@ -94,12 +74,12 @@ chatForm.addEventListener("submit", async (e) => {
     sendBtn.disabled = true;
 
     try {
-        const response = await fetch(`/chat?message=${encodeURIComponent(msg)}`);
+        const response = await fetch(`/chat?message=${encodeURIComponent(msg)}&bookId=${activeBookId}`, {
+            headers: { "x-session-id": sessionId }
+        });
         
-        // Remove loading dots
         bubbleContent.innerHTML = "";
         let fullMarkdownText = "";
-
         const reader = response.body.getReader();
         const decoder = new TextDecoder("utf-8");
 
@@ -114,14 +94,12 @@ chatForm.addEventListener("submit", async (e) => {
                 if (ev.startsWith("data: ")) {
                     const dataStr = ev.substring(6);
                     if (dataStr === "[DONE]") break;
-                    
                     try {
                         const parsed = JSON.parse(dataStr);
                         if (parsed.error) {
                             bubbleContent.innerHTML += `<br><span style="color:red">Error: ${parsed.error}</span>`;
                         } else if (parsed.chunk) {
                             fullMarkdownText += parsed.chunk;
-                            // Parse markdown beautifully using Marked.js
                             bubbleContent.innerHTML = marked.parse(fullMarkdownText);
                             chatWindow.scrollTop = chatWindow.scrollHeight;
                         }
@@ -138,14 +116,10 @@ chatForm.addEventListener("submit", async (e) => {
     chatInput.focus();
 });
 
-// ─── UI Helpers ─────────────────────────────────────────────────────────────
 function appendUserMessage(text) {
     const wrapper = document.createElement("div");
     wrapper.className = "message user-message";
-    wrapper.innerHTML = `
-        <div class="avatar"></div>
-        <div class="bubble">${escapeHtml(text)}</div>
-    `;
+    wrapper.innerHTML = `<div class="avatar"></div><div class="bubble">${escapeHtml(text)}</div>`;
     chatWindow.appendChild(wrapper);
     chatWindow.scrollTop = chatWindow.scrollHeight;
 }
@@ -155,16 +129,7 @@ function createAiBubble() {
     const wrapper = document.createElement("div");
     wrapper.className = "message ai-message";
     wrapper.id = id;
-    wrapper.innerHTML = `
-        <div class="avatar"><i data-lucide="bot"></i></div>
-        <div class="bubble">
-            <div class="loader-dots">
-                <div class="dot"></div>
-                <div class="dot"></div>
-                <div class="dot"></div>
-            </div>
-        </div>
-    `;
+    wrapper.innerHTML = `<div class="avatar"><i data-lucide="bot"></i></div><div class="bubble"><div class="loader-dots"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div></div>`;
     chatWindow.appendChild(wrapper);
     lucide.createIcons();
     chatWindow.scrollTop = chatWindow.scrollHeight;
@@ -174,15 +139,10 @@ function createAiBubble() {
 function appendAiMessage(markdownText) {
     const wrapper = document.createElement("div");
     wrapper.className = "message ai-message";
-    wrapper.innerHTML = `
-        <div class="avatar"><i data-lucide="bot"></i></div>
-        <div class="bubble">${marked.parse(markdownText)}</div>
-    `;
+    wrapper.innerHTML = `<div class="avatar"><i data-lucide="bot"></i></div><div class="bubble">${marked.parse(markdownText)}</div>`;
     chatWindow.appendChild(wrapper);
     lucide.createIcons();
     chatWindow.scrollTop = chatWindow.scrollHeight;
 }
 
-function escapeHtml(unsafe) {
-    return unsafe.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
+function escapeHtml(unsafe) { return unsafe.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }

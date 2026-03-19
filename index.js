@@ -2,102 +2,184 @@ import "dotenv/config";
 import express from "express";
 import multer from "multer";
 import { PDFParse } from "pdf-parse";
+import rateLimit from "express-rate-limit";
+import fs from "fs";
+import path from "path";
+import crypto from "crypto";
 
 const app = express();
 const port = 3000;
 
-// Setup static file serving
+// ─── 0. Setup Database Directories ──────────────────────────────────────────
+const DATA_DIR = path.join(process.cwd(), "data");
+const CHUNKS_DIR = path.join(DATA_DIR, "chunks");
+const BOOKS_DB = path.join(DATA_DIR, "books.json");
+
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR);
+if (!fs.existsSync(CHUNKS_DIR)) fs.mkdirSync(CHUNKS_DIR);
+if (!fs.existsSync("uploads")) fs.mkdirSync("uploads");
+
+// Basic JSON DB Helper
+function getBooks() {
+  if (!fs.existsSync(BOOKS_DB)) return [];
+  return JSON.parse(fs.readFileSync(BOOKS_DB, "utf8"));
+}
+function saveBook(book) {
+  const books = getBooks();
+  books.push(book);
+  fs.writeFileSync(BOOKS_DB, JSON.stringify(books, null, 2));
+}
+
+// ─── 1. Middlewares ─────────────────────────────────────────────────────────
+const limiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 200 });
 app.use(express.static("public"));
 app.use(express.json());
+app.use("/chat", limiter);
+app.use("/admin/upload", limiter);
 
-// Setup multer for memory storage file uploads
-const upload = multer({ storage: multer.memoryStorage() });
+// Multer Disk Storage
+const storage = multer.diskStorage({
+  destination: "uploads/",
+  filename: (req, file, cb) => cb(null, Date.now() + "-" + file.originalname)
+});
+const upload = multer({ storage });
 
-// Global conversation context (In production, use sessions)
-let currentPdfContext = "";
-let messages = [];
+// Multi-User Sessions (For Chat History only)
+const sessions = new Map();
 
-// Endpoint: Upload PDF and extract text
-app.post("/upload", upload.single("pdf"), async (req, res) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ error: "No file uploaded." });
+// RAG Algorithm
+function getTopChunks(query, chunks, topK = 7) {
+  const queryWords = query.toLowerCase().replace(/[^\w\s]/g, "").split(/\s+/).filter(w => w.length > 3);
+  if (queryWords.length === 0) return chunks.slice(0, topK);
+
+  const scored = chunks.map(chunk => {
+    let score = 0;
+    const chunkLower = chunk.toLowerCase();
+    for (const word of queryWords) {
+      score += chunkLower.split(word).length - 1;
     }
+    return { chunk, score };
+  });
 
-    // Parse the PDF
-    const parser = new PDFParse({ data: req.file.buffer });
+  return scored.sort((a, b) => b.score - a.score).slice(0, topK).map(s => s.chunk);
+}
+
+// ─── 2. Endpoints ───────────────────────────────────────────────────────────
+
+// Public: Get Library Catalogue
+app.get("/books", (req, res) => {
+  res.json(getBooks());
+});
+
+// Admin: Upload Book Pipeline
+app.post("/admin/upload", upload.single("pdf"), async (req, res) => {
+  const { title, description } = req.body;
+  
+  if (!title || !description || !req.file) {
+    if (req.file) fs.unlinkSync(req.file.path);
+    return res.status(400).json({ error: "Missing title, description, or file." });
+  }
+
+  try {
+    const filePath = path.join(process.cwd(), req.file.path);
+    
+    // Parse PDF
+    const parser = new PDFParse({ data: fs.readFileSync(filePath) });
     const result = await parser.getText();
     await parser.destroy();
+    fs.unlinkSync(filePath); // Cleanup
 
-    // Create the labelled context per page
-    currentPdfContext = result.pages
-      .map((p) => `[Page ${p.num}]\n${p.text.trim()}`)
-      .join("\n\n");
+    // Chunking text
+    const docChunks = [];
+    for (const page of result.pages) {
+      const paragraphs = page.text.split(/\n\s*\n/);
+      for (const para of paragraphs) {
+        if (para.trim().length > 40) {
+          docChunks.push(`[Page ${page.num}] ${para.trim().replace(/\n/g, ' ')}`);
+        }
+      }
+    }
 
-    const filename = req.file.originalname;
+    // Save Chunks to Disk persistently
+    const bookId = crypto.randomUUID();
+    const chunkPath = path.join(CHUNKS_DIR, `${bookId}.json`);
+    fs.writeFileSync(chunkPath, JSON.stringify(docChunks));
 
-    // Reset conversation history with the new system context
-    messages = [
-      {
-        role: "system",
-        content: `You are an expert assistant for the document "${filename}".
-The document is provided below, where each page starts with [Page N].
+    // Save Metadata to DB
+    const newBook = {
+      id: bookId,
+      title: title.trim(),
+      description: description.trim(),
+      filename: req.file.originalname,
+      pages: result.total,
+      chunkCount: docChunks.length,
+      createdAt: new Date().toISOString()
+    };
+    saveBook(newBook);
 
-Rules:
-- Always cite the correct page number(s) in your answer (e.g. "According to Page 3...").
-- Say "This is not covered in the document" if the text does not contain the answer.
-- Format your response clearly using markdown.
-- Be concise.
-
---- DOCUMENT START ---
-${currentPdfContext}
---- DOCUMENT END ---`,
-      },
-    ];
-
-    res.json({ success: true, pages: result.total, filename });
-  } catch (error) {
-    console.error("Upload error:", error);
-    res.status(500).json({ error: "Failed to parse PDF." });
+    res.json({ success: true, book: newBook });
+  } catch (err) {
+    console.error("Admin upload error:", err);
+    res.status(500).json({ error: "Failed to parse and store PDF." });
   }
 });
 
-// Endpoint: Chat with streaming SSE
+// Public: Streaming Chat
 app.get("/chat", async (req, res) => {
-  const userInput = req.query.message;
-  if (!userInput) return res.end();
-
-  if (!currentPdfContext) {
-    res.write("data: " + JSON.stringify({ error: "Please upload a PDF first." }) + "\n\n");
-    return res.end();
-  }
-
-  messages.push({ role: "user", content: userInput });
-
-  // Server-Sent Events headers
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep-alive");
+  const sessionId = req.headers["x-session-id"];
+  const { message, bookId } = req.query;
+  
+  if (!sessionId || !message || !bookId) return res.end();
 
   try {
+    // Load Specific Book Chunks
+    const chunkPath = path.join(CHUNKS_DIR, `${bookId}.json`);
+    if (!fs.existsSync(chunkPath)) {
+      res.write("data: " + JSON.stringify({ error: "Book not found in database." }) + "\n\n");
+      return res.end();
+    }
+    const chunks = JSON.parse(fs.readFileSync(chunkPath, "utf8"));
+
+    // Ensure session exists
+    if (!sessions.has(sessionId)) sessions.set(sessionId, { history: [] });
+    const session = sessions.get(sessionId);
+
+    // Apply RAG Context
+    const bestChunks = getTopChunks(message, chunks, 7);
+    const ragContext = bestChunks.join("\n\n");
+
+    const systemMessage = {
+      role: "system",
+      content: `You are an expert Q&A system for the current document. Answer using ONLY the snippets provided below.
+Always cite the matching [Page N] in your answer.
+If the snippets do not contain the answer, reply "I cannot find the answer in the document."
+
+--- DOCUMENT SNIPPETS ---
+${ragContext}
+--- END ---`
+    };
+
+    const currentMessages = [
+      systemMessage,
+      ...session.history,
+      { role: "user", content: message }
+    ];
+
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+
     const ollamaRequest = await fetch("https://ollama.com/api/chat", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.OLLAMA_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: "qwen3.5:cloud",
-        messages,
-        stream: true,
-      }),
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.OLLAMA_API_KEY}` },
+      body: JSON.stringify({ model: "qwen3.5:cloud", messages: currentMessages, stream: true }),
     });
 
     let fullReply = "";
     const decoder = new TextDecoder();
 
     for await (const chunk of ollamaRequest.body) {
-      const lines = decoder.decode(chunk).split("\n").filter((l) => l.trim() !== "");
+      const lines = decoder.decode(chunk).split("\n").filter(Boolean);
       for (const line of lines) {
         try {
           const json = JSON.parse(line);
@@ -105,22 +187,27 @@ app.get("/chat", async (req, res) => {
             fullReply += json.message.content;
             res.write(`data: ${JSON.stringify({ chunk: json.message.content })}\n\n`);
           }
-        } catch { /* skip incomplete chunks */ }
+        } catch { }
       }
     }
 
-    messages.push({ role: "assistant", content: fullReply });
+    session.history.push({ role: "user", content: message });
+    session.history.push({ role: "assistant", content: fullReply });
+    if (session.history.length > 6) {
+      session.history = session.history.slice(session.history.length - 6);
+    }
+
     res.write("data: [DONE]\n\n");
     res.end();
   } catch (error) {
     console.error("Chat error:", error);
-    res.write("data: " + JSON.stringify({ error: "Failed to connect to AI API." }) + "\n\n");
+    res.write("data: " + JSON.stringify({ error: "API connection failed" }) + "\n\n");
     res.end();
   }
 });
 
 app.listen(port, () => {
-  console.log(`\n🚀 Web UI Server is running!`);
-  console.log(`🌍 Open your browser and go to: http://localhost:${port}`);
-  console.log(`\nPress Ctrl+C to stop the server.`);
+  console.log(`\n🚀 Server is running at http://localhost:${port}`);
+  console.log(`📚 Public Library Hub ready at /`);
+  console.log(`⚙️  Admin Portal ready at /admin.html\n`);
 });

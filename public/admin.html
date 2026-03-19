@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Portal - PDF Library</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        :root { --bg-main: #09090b; --bg-card: rgba(24, 24, 27, 0.8); --border: rgba(255, 255, 255, 0.1); --text: #FAFAFA; --accent: #6366f1; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Inter', sans-serif; background: var(--bg-main); color: var(--text); padding: 50px 20px; display: flex; justify-content: center; }
+        .admin-card { background: var(--bg-card); border: 1px solid var(--border); padding: 32px; border-radius: 16px; width: 100%; max-width: 550px; box-shadow: 0 8px 32px rgba(0,0,0,0.4); backdrop-filter: blur(10px); }
+        h2 { margin-bottom: 24px; display: flex; align-items: center; gap: 10px; font-size: 1.5rem; }
+        .form-group { margin-bottom: 20px; }
+        label { display: block; margin-bottom: 8px; font-size: 0.9rem; color: #a1a1aa; font-weight: 500; }
+        input[type="text"], textarea { width: 100%; padding: 14px; border-radius: 8px; border: 1px solid var(--border); background: rgba(0,0,0,0.4); color: white; outline: none; font-family: inherit; font-size: 0.95rem; transition: border-color 0.2s; }
+        textarea { resize: vertical; min-height: 100px; }
+        input[type="text"]:focus, textarea:focus { border-color: var(--accent); }
+        input[type="file"] { width: 100%; padding: 16px; background: rgba(255,255,255,0.02); border: 2px dashed var(--border); border-radius: 8px; color: #a1a1aa; cursor: pointer; }
+        button { width: 100%; background: var(--accent); color: white; padding: 16px; border: none; border-radius: 8px; font-size: 1.05rem; font-weight: 600; cursor: pointer; transition: 0.2s; display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 10px; }
+        button:hover:not(:disabled) { background: #4f46e5; transform: scale(1.02); }
+        button:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+        #status { margin-top: 20px; font-size: 0.95rem; text-align: center; display: none; padding: 12px; border-radius: 8px; }
+        .success { background: rgba(34, 197, 94, 0.1); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.2); }
+        .error { background: rgba(239, 68, 68, 0.1); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.2); }
+        .nav-link { margin-top: 24px; display: flex; justify-content: center; align-items: center; gap: 6px; color: var(--text); text-decoration: none; font-size: 0.9rem; transition: color 0.2s; }
+        .nav-link:hover { color: var(--accent); }
+        
+        .lucide-spin { animation: spin 2s linear infinite; }
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <div class="admin-card">
+        <h2><i data-lucide="shield-check" style="color: var(--accent); width: 28px; height: 28px;"></i> Admin Dashboard</h2>
+        <p style="color: #a1a1aa; margin-bottom: 24px; font-size: 0.9rem;">Upload books or PDFs to easily populate the library database for public user access.</p>
+        
+        <form id="admin-form">
+            <div class="form-group">
+                <label>Book Title</label>
+                <input type="text" id="title" required placeholder="e.g., The Constitution of India">
+            </div>
+            <div class="form-group">
+                <label>Description</label>
+                <textarea id="desc" required placeholder="Enter a brief summary or author details..."></textarea>
+            </div>
+            <div class="form-group">
+                <label>PDF Document</label>
+                <input type="file" id="pdfFile" accept="application/pdf" required>
+            </div>
+            
+            <button type="submit" id="submit-btn"><i data-lucide="upload-cloud"></i> Upload & Process Book</button>
+            <div id="status"></div>
+        </form>
+        
+        <a href="/" class="nav-link"><i data-lucide="arrow-left" style="width: 16px; height: 16px;"></i> Return to Library Hub</a>
+    </div>
+
+    <script>
+        lucide.createIcons();
+        const form = document.getElementById("admin-form");
+        const btn = document.getElementById("submit-btn");
+        const status = document.getElementById("status");
+
+        form.addEventListener("submit", async (e) => {
+            e.preventDefault();
+            btn.disabled = true;
+            btn.innerHTML = `<i data-lucide="loader" class="lucide-spin"></i> Extracting & Chunking...`;
+            lucide.createIcons();
+            status.style.display = "none";
+            status.className = "";
+
+            const formData = new FormData();
+            formData.append("title", document.getElementById("title").value);
+            formData.append("description", document.getElementById("desc").value);
+            formData.append("pdf", document.getElementById("pdfFile").files[0]);
+
+            try {
+                const res = await fetch("/admin/upload", { method: "POST", body: formData });
+                const data = await res.json();
+                
+                status.style.display = "block";
+                if (data.success) {
+                    status.className = "success";
+                    status.innerHTML = `✅ Successfully added <strong>${data.book.title}</strong> (${data.book.pages} pages).`;
+                    form.reset();
+                } else {
+                    status.className = "error";
+                    status.innerHTML = `❌ Error: ${data.error}`;
+                }
+            } catch (err) { 
+                status.style.display = "block";
+                status.className = "error";
+                status.innerHTML = `❌ Failed to connect to server.`; 
+            }
+            
+            btn.disabled = false;
+            btn.innerHTML = `<i data-lucide="upload-cloud"></i> Upload & Process Book`;
+            lucide.createIcons();
+        });
+    </script>
+</body>
+</html>
