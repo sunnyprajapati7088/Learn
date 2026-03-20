@@ -268,10 +268,11 @@ ${ragContext}
 // IMPORTANT: Export ‘app’ for Vercel serverless environment
 export default app;
 
-// Start server locally if not on Vercel
-if (process.env.NODE_ENV !== "production" && !process.env.VERCEL) {
-  app.listen(port, () => {
-    console.log(`\n🚀 Dev Server is running at http://localhost:${port}`);
-    console.log(`🌍 IMPORTANT: You must provide a valid MONGO_URI in .env!`);
+// Start server if not running on Vercel
+if (!process.env.VERCEL) {
+  // Bind to 0.0.0.0 which is required by many cloud hosts including Render
+  app.listen(port, "0.0.0.0", () => {
+    console.log(`\n🚀 Server is running on port ${port}`);
+    console.log(`🌍 IMPORTANT: You must provide a valid MONGO_URI in your host's environment settings!`);
   });
 }
