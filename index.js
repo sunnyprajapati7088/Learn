@@ -8,7 +8,7 @@ import path from "path";
 import mongoose from "mongoose";
 
 const app = express();
-const port = 3005;
+const port = process.env.PORT || 3005;
 
 // ─── 0. Connect to MongoDB (Vercel Ready) ──────────────────────────────────
 const MONGO_URI = process.env.MONGO_URI;
