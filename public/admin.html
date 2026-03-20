@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Admin Portal - PDF Library</title>
+    <title>Admin Portal - Manage Library</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/lucide@latest"></script>
     <style>
         :root { --bg-main: #09090b; --bg-card: rgba(24, 24, 27, 0.8); --border: rgba(255, 255, 255, 0.1); --text: #FAFAFA; --accent: #6366f1; }
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: 'Inter', sans-serif; background: var(--bg-main); color: var(--text); padding: 50px 20px; display: flex; justify-content: center; }
-        .admin-card { background: var(--bg-card); border: 1px solid var(--border); padding: 32px; border-radius: 16px; width: 100%; max-width: 550px; box-shadow: 0 8px 32px rgba(0,0,0,0.4); backdrop-filter: blur(10px); }
+        body { font-family: 'Inter', sans-serif; background: var(--bg-main); color: var(--text); padding: 50px 20px; display: flex; flex-direction: column; align-items: center; gap: 40px; overflow-y: auto; }
+        .admin-card { background: var(--bg-card); border: 1px solid var(--border); padding: 32px; border-radius: 16px; width: 100%; max-width: 600px; box-shadow: 0 8px 32px rgba(0,0,0,0.4); backdrop-filter: blur(10px); }
         h2 { margin-bottom: 24px; display: flex; align-items: center; gap: 10px; font-size: 1.5rem; }
         .form-group { margin-bottom: 20px; }
         label { display: block; margin-bottom: 8px; font-size: 0.9rem; color: #a1a1aa; font-weight: 500; }
@@ -21,6 +21,20 @@
         button { width: 100%; background: var(--accent); color: white; padding: 16px; border: none; border-radius: 8px; font-size: 1.05rem; font-weight: 600; cursor: pointer; transition: 0.2s; display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 10px; }
         button:hover:not(:disabled) { background: #4f46e5; transform: scale(1.02); }
         button:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+        
+        /* Table Styles */
+        .table-container { width: 100%; overflow-x: auto; margin-top: 10px; border-radius: 8px; border: 1px solid var(--border); }
+        table { width: 100%; border-collapse: collapse; text-align: left; }
+        th, td { padding: 12px 16px; border-bottom: 1px solid var(--border); font-size: 0.9rem; }
+        th { color: #a1a1aa; font-weight: 500; background: rgba(0,0,0,0.3); }
+        td { background: rgba(255,255,255,0.01); }
+        .actions { display: flex; gap: 8px; }
+        .btn-small { padding: 8px; width: auto; font-size: 0.85rem; border-radius: 6px; margin: 0; }
+        .btn-edit { background: rgba(99, 102, 241, 0.2); color: #818cf8; }
+        .btn-edit:hover { background: rgba(99, 102, 241, 0.4); }
+        .btn-delete { background: rgba(239, 68, 68, 0.2); color: #f87171; }
+        .btn-delete:hover { background: rgba(239, 68, 68, 0.4); }
+
         #status { margin-top: 20px; font-size: 0.95rem; text-align: center; display: none; padding: 12px; border-radius: 8px; }
         .success { background: rgba(34, 197, 94, 0.1); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.2); }
         .error { background: rgba(239, 68, 68, 0.1); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.2); }
@@ -33,9 +47,7 @@
 </head>
 <body>
     <div class="admin-card">
-        <h2><i data-lucide="shield-check" style="color: var(--accent); width: 28px; height: 28px;"></i> Admin Dashboard</h2>
-        <p style="color: #a1a1aa; margin-bottom: 24px; font-size: 0.9rem;">Upload books or PDFs to easily populate the library database for public user access.</p>
-        
+        <h2><i data-lucide="upload-cloud" style="color: var(--accent); width: 28px; height: 28px;"></i> Upload New Book</h2>
         <form id="admin-form">
             <div class="form-group">
                 <label>Book Title</label>
@@ -50,11 +62,30 @@
                 <input type="file" id="pdfFile" accept="application/pdf" required>
             </div>
             
-            <button type="submit" id="submit-btn"><i data-lucide="upload-cloud"></i> Upload & Process Book</button>
+            <button type="submit" id="submit-btn">Upload & Process</button>
             <div id="status"></div>
         </form>
-        
-        <a href="/" class="nav-link"><i data-lucide="arrow-left" style="width: 16px; height: 16px;"></i> Return to Library Hub</a>
+    </div>
+
+    <!-- Manage Library Card -->
+    <div class="admin-card" style="max-width: 800px;">
+        <h2><i data-lucide="library" style="color: var(--accent); width: 28px; height: 28px;"></i> Manage Library</h2>
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Title</th>
+                        <th>Pages</th>
+                        <th>File Name</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="books-table">
+                    <tr><td colspan="4" style="text-align: center; color: #a1a1aa;">Loading books...</td></tr>
+                </tbody>
+            </table>
+        </div>
+        <a href="/" class="nav-link"><i data-lucide="arrow-left" style="width: 16px; height: 16px;"></i> Return to Public Library Hub</a>
     </div>
 
     <script>
@@ -62,7 +93,72 @@
         const form = document.getElementById("admin-form");
         const btn = document.getElementById("submit-btn");
         const status = document.getElementById("status");
+        const tableBody = document.getElementById("books-table");
 
+        // Load Books
+        async function fetchBooks() {
+            try {
+                const res = await fetch("/books");
+                const books = await res.json();
+                tableBody.innerHTML = "";
+                
+                if (books.length === 0) {
+                    tableBody.innerHTML = `<tr><td colspan="4" style="text-align: center; color: #a1a1aa; padding: 20px;">No books found in the database.</td></tr>`;
+                    return;
+                }
+
+                books.forEach(b => {
+                    const row = document.createElement("tr");
+                    row.innerHTML = `
+                        <td><strong>${escapeHtml(b.title)}</strong></td>
+                        <td>${b.pages || "?"}</td>
+                        <td style="color:#a1a1aa; font-size:0.8rem;">${escapeHtml(b.filename || "")}</td>
+                        <td class="actions">
+                            <button class="btn-small btn-edit" title="Edit Metadata" onclick="editBook('${b.id}', '${escapeQuotes(b.title)}', '${escapeQuotes(b.description)}')">
+                                <i data-lucide="edit-3"></i>
+                            </button>
+                            <button class="btn-small btn-delete" title="Delete Book" onclick="deleteBook('${b.id}')">
+                                <i data-lucide="trash-2"></i>
+                            </button>
+                        </td>
+                    `;
+                    tableBody.appendChild(row);
+                });
+                lucide.createIcons();
+            } catch (err) {
+                tableBody.innerHTML = `<tr><td colspan="4" style="text-align: center; color: #ef4444;">Failed to load library.</td></tr>`;
+            }
+        }
+
+        // CRUD Actions
+        window.deleteBook = async function(id) {
+            if (!confirm("Are you sure you want to completely delete this book from the database? This cannot be undone.")) return;
+            
+            try {
+                const res = await fetch(`/admin/books/${id}`, { method: "DELETE" });
+                if (res.ok) fetchBooks();
+                else alert("Failed to delete book.");
+            } catch (e) { alert("Server error."); }
+        }
+
+        window.editBook = async function(id, oldTitle, oldDesc) {
+            const newTitle = prompt("Update Title:", oldTitle);
+            if (newTitle === null) return;
+            const newDesc = prompt("Update Description:", oldDesc);
+            if (newDesc === null) return;
+
+            try {
+                const res = await fetch(`/admin/books/${id}`, { 
+                    method: "PUT", 
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ title: newTitle, description: newDesc })
+                });
+                if (res.ok) fetchBooks();
+                else alert("Failed to update book.");
+            } catch (e) { alert("Server error."); }
+        }
+
+        // Upload Handler
         form.addEventListener("submit", async (e) => {
             e.preventDefault();
             btn.disabled = true;
@@ -85,6 +181,7 @@
                     status.className = "success";
                     status.innerHTML = `✅ Successfully added <strong>${data.book.title}</strong> (${data.book.pages} pages).`;
                     form.reset();
+                    fetchBooks(); // Refresh table!
                 } else {
                     status.className = "error";
                     status.innerHTML = `❌ Error: ${data.error}`;
@@ -96,9 +193,14 @@
             }
             
             btn.disabled = false;
-            btn.innerHTML = `<i data-lucide="upload-cloud"></i> Upload & Process Book`;
+            btn.innerHTML = `Upload & Process`;
             lucide.createIcons();
         });
+
+        function escapeHtml(unsafe) { return unsafe ? String(unsafe).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;") : ""; }
+        function escapeQuotes(unsafe) { return unsafe ? String(unsafe).replace(/'/g, "\\'").replace(/"/g, "&quot;") : ""; }
+
+        fetchBooks(); // Init
     </script>
 </body>
 </html>

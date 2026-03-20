@@ -5,49 +5,58 @@ import { PDFParse } from "pdf-parse";
 import rateLimit from "express-rate-limit";
 import fs from "fs";
 import path from "path";
-import crypto from "crypto";
+import mongoose from "mongoose";
 
 const app = express();
-const port = 3000;
+const port = 3005;
 
-// ─── 0. Setup Database Directories ──────────────────────────────────────────
-const DATA_DIR = path.join(process.cwd(), "data");
-const CHUNKS_DIR = path.join(DATA_DIR, "chunks");
-const BOOKS_DB = path.join(DATA_DIR, "books.json");
+// ─── 0. Connect to MongoDB (Vercel Ready) ──────────────────────────────────
+const MONGO_URI = process.env.MONGO_URI;
 
-if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR);
-if (!fs.existsSync(CHUNKS_DIR)) fs.mkdirSync(CHUNKS_DIR);
-if (!fs.existsSync("uploads")) fs.mkdirSync("uploads");
-
-// Basic JSON DB Helper
-function getBooks() {
-  if (!fs.existsSync(BOOKS_DB)) return [];
-  return JSON.parse(fs.readFileSync(BOOKS_DB, "utf8"));
-}
-function saveBook(book) {
-  const books = getBooks();
-  books.push(book);
-  fs.writeFileSync(BOOKS_DB, JSON.stringify(books, null, 2));
+if (!MONGO_URI) {
+  console.warn("⚠️ Warning: MONGO_URI is missing in .env! Database connection will fail.");
+} else {
+  mongoose.connect(MONGO_URI)
+    .then(() => console.log("✅ MongoDB Connected successfully!"))
+    .catch(err => console.error("❌ MongoDB connection error:", err));
 }
 
-// ─── 1. Middlewares ─────────────────────────────────────────────────────────
+// Database Schema
+const BookSchema = new mongoose.Schema({
+  title: String,
+  description: String,
+  filename: String,
+  pages: Number,
+  chunkCount: Number,
+  createdAt: { type: Date, default: Date.now },
+  chunks: [String] // Array of raw text paragraph strings
+});
+
+const Book = mongoose.model("Book", BookSchema);
+
+// ─── 1. Middlewares & Uploads ───────────────────────────────────────────────
 const limiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 200 });
 app.use(express.static("public"));
 app.use(express.json());
 app.use("/chat", limiter);
-app.use("/admin/upload", limiter);
+app.use("/admin", limiter);
 
-// Multer Disk Storage
+// Serverless environments (like Vercel) only allow writing to /tmp
+const UPLOAD_DIR = process.env.VERCEL ? "/tmp" : "uploads/";
+if (!fs.existsSync(UPLOAD_DIR)) {
+    try { fs.mkdirSync(UPLOAD_DIR); } catch (e) {} // Ignore if Vercel prevents mkdir
+}
+
 const storage = multer.diskStorage({
-  destination: "uploads/",
+  destination: process.env.VERCEL ? "/tmp" : "uploads/",
   filename: (req, file, cb) => cb(null, Date.now() + "-" + file.originalname)
 });
 const upload = multer({ storage });
 
-// Multi-User Sessions (For Chat History only)
+// Multi-User Sessions (In-Memory array kept small for fast history)
 const sessions = new Map();
 
-// RAG Algorithm
+// Simplified RAG Keyword Search algorithm
 function getTopChunks(query, chunks, topK = 7) {
   const queryWords = query.toLowerCase().replace(/[^\w\s]/g, "").split(/\s+/).filter(w => w.length > 3);
   if (queryWords.length === 0) return chunks.slice(0, topK);
@@ -66,12 +75,29 @@ function getTopChunks(query, chunks, topK = 7) {
 
 // ─── 2. Endpoints ───────────────────────────────────────────────────────────
 
-// Public: Get Library Catalogue
-app.get("/books", (req, res) => {
-  res.json(getBooks());
+// Public: Get Library Catalogue from MongoDB
+app.get("/books", async (req, res) => {
+  try {
+    // Specifically exclude 'chunks' to save bandwidth!
+    const books = await Book.find({}, { chunks: 0 }).sort({ createdAt: -1 });
+    
+    // Map _id to id for the frontend
+    const formatted = books.map(b => ({
+      id: b._id,
+      title: b.title,
+      description: b.description,
+      filename: b.filename,
+      pages: b.pages,
+      chunkCount: b.chunkCount
+    }));
+
+    res.json(formatted);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch library from database." });
+  }
 });
 
-// Admin: Upload Book Pipeline
+// Admin: Upload Book Pipeline -> Store to MongoDB
 app.post("/admin/upload", upload.single("pdf"), async (req, res) => {
   const { title, description } = req.body;
   
@@ -81,13 +107,19 @@ app.post("/admin/upload", upload.single("pdf"), async (req, res) => {
   }
 
   try {
-    const filePath = path.join(process.cwd(), req.file.path);
-    
+    let filePath = path.join(process.cwd(), req.file.path);
+    if (process.env.VERCEL) {
+        // In Vercel, req.file.path usually points directly to /tmp/filename
+        filePath = req.file.path; 
+    }
+
     // Parse PDF
     const parser = new PDFParse({ data: fs.readFileSync(filePath) });
     const result = await parser.getText();
     await parser.destroy();
-    fs.unlinkSync(filePath); // Cleanup
+    
+    // 🔥 Cleanup: Delete the actual PDF to save server disk space!
+    fs.unlinkSync(filePath);
 
     // Chunking text
     const docChunks = [];
@@ -100,31 +132,58 @@ app.post("/admin/upload", upload.single("pdf"), async (req, res) => {
       }
     }
 
-    // Save Chunks to Disk persistently
-    const bookId = crypto.randomUUID();
-    const chunkPath = path.join(CHUNKS_DIR, `${bookId}.json`);
-    fs.writeFileSync(chunkPath, JSON.stringify(docChunks));
-
-    // Save Metadata to DB
-    const newBook = {
-      id: bookId,
+    // Save Metadata & Chunks to MongoDB ✨
+    const newBook = new Book({
       title: title.trim(),
       description: description.trim(),
       filename: req.file.originalname,
       pages: result.total,
       chunkCount: docChunks.length,
-      createdAt: new Date().toISOString()
-    };
-    saveBook(newBook);
+      chunks: docChunks
+    });
 
-    res.json({ success: true, book: newBook });
+    await newBook.save();
+
+    res.json({ 
+        success: true, 
+        book: { id: newBook._id, title: newBook.title, pages: newBook.pages } 
+    });
   } catch (err) {
     console.error("Admin upload error:", err);
-    res.status(500).json({ error: "Failed to parse and store PDF." });
+    res.status(500).json({ error: "Failed to parse and store PDF to database." });
   }
 });
 
-// Public: Streaming Chat
+// Admin: Update Book Metadata
+app.put("/admin/books/:id", async (req, res) => {
+  const { title, description } = req.body;
+  if (!title || !description) return res.status(400).json({ error: "Missing title or description." });
+
+  try {
+    const updatedBook = await Book.findByIdAndUpdate(req.params.id, { 
+      title: title.trim(), 
+      description: description.trim() 
+    }, { new: true, select: "-chunks" });
+    
+    if (!updatedBook) return res.status(404).json({ error: "Book not found." });
+    res.json({ success: true, book: updatedBook });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to update book." });
+  }
+});
+
+// Admin: Delete Book
+app.delete("/admin/books/:id", async (req, res) => {
+  try {
+    const deletedBook = await Book.findByIdAndDelete(req.params.id);
+    if (!deletedBook) return res.status(404).json({ error: "Book not found." });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to delete book." });
+  }
+});
+
+// Public: Streaming Chat connecting to the DB
 app.get("/chat", async (req, res) => {
   const sessionId = req.headers["x-session-id"];
   const { message, bookId } = req.query;
@@ -132,20 +191,19 @@ app.get("/chat", async (req, res) => {
   if (!sessionId || !message || !bookId) return res.end();
 
   try {
-    // Load Specific Book Chunks
-    const chunkPath = path.join(CHUNKS_DIR, `${bookId}.json`);
-    if (!fs.existsSync(chunkPath)) {
-      res.write("data: " + JSON.stringify({ error: "Book not found in database." }) + "\n\n");
+    // Load Specific Book Chunks directly from MongoDB
+    const book = await Book.findById(bookId, { chunks: 1 });
+    if (!book || !book.chunks) {
+      res.write("data: " + JSON.stringify({ error: `Book ID ${bookId} not found in database.` }) + "\n\n");
       return res.end();
     }
-    const chunks = JSON.parse(fs.readFileSync(chunkPath, "utf8"));
 
     // Ensure session exists
     if (!sessions.has(sessionId)) sessions.set(sessionId, { history: [] });
     const session = sessions.get(sessionId);
 
-    // Apply RAG Context
-    const bestChunks = getTopChunks(message, chunks, 7);
+    // Apply RAG Context to prevent Ollama from crashing
+    const bestChunks = getTopChunks(message, book.chunks, 7);
     const ragContext = bestChunks.join("\n\n");
 
     const systemMessage = {
@@ -191,6 +249,7 @@ ${ragContext}
       }
     }
 
+    // Short-term conversational memory
     session.history.push({ role: "user", content: message });
     session.history.push({ role: "assistant", content: fullReply });
     if (session.history.length > 6) {
@@ -201,13 +260,18 @@ ${ragContext}
     res.end();
   } catch (error) {
     console.error("Chat error:", error);
-    res.write("data: " + JSON.stringify({ error: "API connection failed" }) + "\n\n");
+    res.write("data: " + JSON.stringify({ error: "API connection or Database lookup failed" }) + "\n\n");
     res.end();
   }
 });
 
-app.listen(port, () => {
-  console.log(`\n🚀 Server is running at http://localhost:${port}`);
-  console.log(`📚 Public Library Hub ready at /`);
-  console.log(`⚙️  Admin Portal ready at /admin.html\n`);
-});
+// IMPORTANT: Export ‘app’ for Vercel serverless environment
+export default app;
+
+// Start server locally if not on Vercel
+if (process.env.NODE_ENV !== "production" && !process.env.VERCEL) {
+  app.listen(port, () => {
+    console.log(`\n🚀 Dev Server is running at http://localhost:${port}`);
+    console.log(`🌍 IMPORTANT: You must provide a valid MONGO_URI in .env!`);
+  });
+}
